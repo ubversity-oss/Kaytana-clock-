@@ -1,0 +1,519 @@
+```html
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>נוכחות קייטנות - ניהול מדריכים קטינים</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Heebo', 'sans-serif'],
+          },
+          colors: {
+            brand: {
+              50: '#eff6ff',
+              100: '#dbeafe',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+              900: '#1e3a8a',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      font-family: 'Heebo', sans-serif;
+      background-color: #f8fafc;
+      color: #0f172a;
+      -webkit-tap-highlight-color: transparent;
+    }
+    /* Custom scrollbar for clean tables */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 w-11/12 max-w-md pointer-events-none"></div>
+
+  <!-- Custom Modal Container -->
+  <div id="modal-backdrop" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-40 hidden items-center justify-center p-4">
+    <div id="modal-content" class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 relative">
+      <!-- Dynamic Modal Content -->
+    </div>
+  </div>
+
+  <!-- Top Navigation Bar -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
+    <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-brand-600 text-white flex items-center justify-center shadow-md shadow-brand-500/20">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+        <div>
+          <h1 class="font-bold text-lg text-slate-900 leading-tight">נוכחות קייטנות</h1>
+          <p class="text-xs text-slate-500 hidden sm:block">מערכת בקרה והחתמה למדריכים קטינים</p>
+        </div>
+      </div>
+
+      <!-- Role Switcher Pills -->
+      <div class="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
+        <button id="btn-mode-instructor" onclick="switchMode('instructor')" class="px-3 sm:px-4 py-1.5 rounded-lg text-sm font-semibold transition-all bg-white text-brand-700 shadow-sm">
+          ממשק מדריך
+        </button>
+        <button id="btn-mode-manager" onclick="switchMode('manager')" class="px-3 sm:px-4 py-1.5 rounded-lg text-sm font-semibold transition-all text-slate-600 hover:text-slate-900">
+          ניהול ובקרה
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Area -->
+  <main id="app-root" class="flex-1 max-w-6xl w-full mx-auto px-4 py-6">
+    <div class="flex flex-col items-center justify-center py-20 text-slate-400">
+      <div class="w-10 h-10 border-4 border-brand-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+      <p class="text-sm font-medium">טוען נתוני מערכת...</p>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="bg-white border-t border-slate-200 py-4 mt-auto">
+    <div class="max-w-6xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 gap-2">
+      <div class="flex items-center gap-2">
+        <span id="sync-status-dot" class="w-2 h-2 rounded-full bg-emerald-500"></span>
+        <span id="sync-status-text">מחובר ומסונכרן</span>
+      </div>
+      <div>עומד בכללי חוק עבודת הנוער (הפסקות ומגבלת 8 שעות יומיות)</div>
+    </div>
+  </footer>
+
+  <!-- Application Logic & Storage -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, doc, setDoc, deleteDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    // =========================================================================
+    // 1. STATE & DEFAULT SEED DATA
+    // =========================================================================
+    const DEFAULT_SETTINGS = {
+      managerPin: '1234',
+      breakThresholdHours: 6, // מעל 6 שעות עבודה
+      breakDeductionMinutes: 45, // ניכוי 45 דקות (לפי חוק עבודת הנוער: 45 דק' מהן 30 רצופות)
+      maxDailyHours: 8, // מקסימום 8 שעות ביום לקטינים
+      maxWeeklyHours: 40 // מקסימום 40 שעות בשבוע לקטינים
+    };
+
+    const SEED_LOCATIONS = [
+      { id: 'loc-rehovot', name: 'מרכז פלא - קייטנת מדעים', city: 'רחובות', lat: 31.8928, lng: 34.8113, radius: 200 },
+      { id: 'loc-tlv', name: 'מרכז עמית - קייטנת אמנויות', city: 'תל אביב', lat: 32.0853, lng: 34.7818, radius: 250 },
+      { id: 'loc-holon', name: 'מתנ"ס קליין - קייטנת ספורט', city: 'חולון', lat: 32.0158, lng: 34.7874, radius: 200 },
+      { id: 'loc-ashdod', name: 'מתנ"ס טנא - קייטנת קיץ', city: 'אשדוד', lat: 31.8044, lng: 34.6553, radius: 250 }
+    ];
+
+    const SEED_INSTRUCTORS = [
+      { id: 'inst-1', name: 'נועה לוי', idNumber: '214567891', pin: '1111', age: 16, phone: '050-1234567', hourlyWage: 34.32 },
+      { id: 'inst-2', name: 'עומר כהן', idNumber: '215678912', pin: '2222', age: 17, phone: '052-2345678', hourlyWage: 36.80 },
+      { id: 'inst-3', name: 'מאיה אברהם', idNumber: '216789123', pin: '3333', age: 15, phone: '054-3456789', hourlyWage: 31.85 },
+      { id: 'inst-4', name: 'איתי מזרחי', idNumber: '217891234', pin: '4444', age: 16, phone: '053-4567890', hourlyWage: 34.32 }
+    ];
+
+    function generateSeedShifts() {
+      const now = new Date();
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, '0');
+      const ddToday = String(now.getDate()).padStart(2, '0');
+      const yesterday = new Date(now);
+      yesterday.setDate(now.getDate() - 1);
+      const ddYest = String(yesterday.getDate()).padStart(2, '0');
+      const mmYest = String(yesterday.getMonth() + 1).padStart(2, '0');
+
+      const yestStart = new Date(`${yyyy}-${mmYest}-${ddYest}T08:00:00`).getTime();
+      const yestEnd = new Date(`${yyyy}-${mmYest}-${ddYest}T15:15:00`).getTime();
+
+      const yestLongStart = new Date(`${yyyy}-${mmYest}-${ddYest}T07:45:00`).getTime();
+      const yestLongEnd = new Date(`${yyyy}-${mmYest}-${ddYest}T16:30:00`).getTime();
+
+      const todayActiveStart = Date.now() - (2 * 3600 * 1000 + 18 * 60 * 1000);
+
+      return [
+        {
+          id: 'shift-seed-1',
+          instructorId: 'inst-1',
+          locationId: 'loc-rehovot',
+          date: `${yyyy}-${mmYest}-${ddYest}`,
+          clockIn: yestStart,
+          clockOut: yestEnd,
+          gpsVerifiedIn: true,
+          gpsVerifiedOut: true,
+          distanceIn: 42,
+          distanceOut: 38,
+          notes: ''
+        },
+        {
+          id: 'shift-seed-2',
+          instructorId: 'inst-2',
+          locationId: 'loc-tlv',
+          date: `${yyyy}-${mmYest}-${ddYest}`,
+          clockIn: yestLongStart,
+          clockOut: yestLongEnd,
+          gpsVerifiedIn: true,
+          gpsVerifiedOut: true,
+          distanceIn: 85,
+          distanceOut: 90,
+          notes: 'הישארות לסגירת ציוד'
+        },
+        {
+          id: 'shift-seed-3',
+          instructorId: 'inst-3',
+          locationId: 'loc-holon',
+          date: `${yyyy}-${mm}-${ddToday}`,
+          clockIn: todayActiveStart,
+          clockOut: null,
+          gpsVerifiedIn: true,
+          gpsVerifiedOut: null,
+          distanceIn: 15,
+          distanceOut: null,
+          notes: ''
+        }
+      ];
+    }
+
+    // Global App State
+    const state = {
+      mode: 'instructor', // 'instructor' | 'manager'
+      managerAuthenticated: false,
+      managerTab: 'overview', // 'overview' | 'logs' | 'locations' | 'instructors' | 'settings'
+      currentInstructor: null,
+      selectedLocationId: '',
+      gps: {
+        status: 'idle', // 'idle' | 'loading' | 'success' | 'error'
+        lat: null,
+        lng: null,
+        accuracy: null,
+        distance: null,
+        inRange: false,
+        errorMsg: '',
+        demoBypass: false
+      },
+      filters: {
+        month: new Date().toISOString().slice(0, 7),
+        locationId: 'all',
+        instructorId: 'all'
+      },
+      settings: { ...DEFAULT_SETTINGS },
+      locations: [],
+      instructors: [],
+      shifts: [],
+      useFirebase: false,
+      db: null,
+      appId: 'default-camp-app',
+      userId: null
+    };
+
+    // =========================================================================
+    // 2. PERSISTENCE ENGINE (FIRESTORE + SAFE IN-MEMORY FALLBACK)
+    // =========================================================================
+    function loadFallbackState() {
+      state.locations = [...SEED_LOCATIONS];
+      state.instructors = [...SEED_INSTRUCTORS];
+      state.shifts = generateSeedShifts();
+      state.settings = { ...DEFAULT_SETTINGS };
+    }
+
+    async function initStorage() {
+      // Immediately boot UI with initial data so it never stalls on loading
+      loadFallbackState();
+      if (state.locations.length > 0 && !state.selectedLocationId) {
+        state.selectedLocationId = state.locations[0].id;
+      }
+      render();
+
+      try {
+        if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+          const firebaseConfig = JSON.parse(__firebase_config);
+          if (firebaseConfig && firebaseConfig.apiKey) {
+            const app = initializeApp(firebaseConfig);
+            const auth = getAuth(app);
+            const db = getFirestore(app);
+            state.appId = typeof __app_id !== 'undefined' ? __app_id : 'camp-attendance-app';
+
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+              await signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+              await signInAnonymously(auth);
+            }
+
+            state.userId = auth.currentUser?.uid;
+            if (state.userId) {
+              state.db = db;
+              state.useFirebase = true;
+              updateSyncIndicator(true, 'מסונכרן לענן בזמן אמת');
+              await setupFirestoreListeners();
+              return;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Firestore initialization unavailable, running in local mode:', err);
+      }
+
+      state.useFirebase = false;
+      updateSyncIndicator(false, 'מצב עבודה פעיל (מוכן לשימוש)');
+      render();
+    }
+
+    function updateSyncIndicator(isCloud, text) {
+      const dot = document.getElementById('sync-status-dot');
+      const label = document.getElementById('sync-status-text');
+      if (dot && label) {
+        dot.className = `w-2 h-2 rounded-full ${isCloud ? 'bg-emerald-500' : 'bg-amber-500'}`;
+        label.textContent = text;
+      }
+    }
+
+    async function setupFirestoreListeners() {
+      if (!state.useFirebase || !state.db || !state.userId) return;
+
+      const baseCol = (colName) => collection(state.db, 'artifacts', state.appId, 'public', 'data', colName);
+      let initialLoads = { locations: false, instructors: false, shifts: false, settings: false };
+
+      const checkSeedNeeded = async () => {
+        if (initialLoads.locations && initialLoads.instructors && initialLoads.shifts && initialLoads.settings) {
+          if (state.locations.length === 0) {
+            for (const loc of SEED_LOCATIONS) {
+              await saveRecord('locations', loc);
+            }
+          }
+          if (state.instructors.length === 0) {
+            for (const inst of SEED_INSTRUCTORS) {
+              await saveRecord('instructors', inst);
+            }
+          }
+          if (state.shifts.length === 0 && state.locations.length > 0) {
+            for (const sh of generateSeedShifts()) {
+              await saveRecord('shifts', sh);
+            }
+          }
+          if (!state.selectedLocationId && state.locations.length > 0) {
+            state.selectedLocationId = state.locations[0].id;
+          }
+          render();
+        }
+      };
+
+      onSnapshot(baseCol('locations'), (snap) => {
+        if (!snap.empty || initialLoads.locations) {
+          state.locations = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        }
+        if (!state.selectedLocationId && state.locations.length > 0) {
+          state.selectedLocationId = state.locations[0].id;
+        }
+        initialLoads.locations = true;
+        checkSeedNeeded();
+        if (initialLoads.settings) render();
+      }, (err) => console.error('Locations listener error:', err));
+
+      onSnapshot(baseCol('instructors'), (snap) => {
+        if (!snap.empty || initialLoads.instructors) {
+          state.instructors = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        }
+        initialLoads.instructors = true;
+        checkSeedNeeded();
+        if (initialLoads.settings) render();
+      }, (err) => console.error('Instructors listener error:', err));
+
+      onSnapshot(baseCol('shifts'), (snap) => {
+        if (!snap.empty || initialLoads.shifts) {
+          state.shifts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        }
+        initialLoads.shifts = true;
+        checkSeedNeeded();
+        if (initialLoads.settings) render();
+      }, (err) => console.error('Shifts listener error:', err));
+
+      onSnapshot(baseCol('settings'), (snap) => {
+        const cfgDoc = snap.docs.find(d => d.id === 'config');
+        if (cfgDoc) {
+          state.settings = { ...DEFAULT_SETTINGS, ...cfgDoc.data() };
+        }
+        initialLoads.settings = true;
+        checkSeedNeeded();
+        render();
+      }, (err) => console.error('Settings listener error:', err));
+    }
+
+    async function saveRecord(collectionName, item) {
+      // Optimistically update local state immediately so UI never stalls
+      if (collectionName === 'settings') {
+        state.settings = { ...state.settings, ...item };
+      } else {
+        const idx = state[collectionName].findIndex(x => x.id === item.id);
+        if (idx >= 0) state[collectionName][idx] = item;
+        else state[collectionName].push(item);
+      }
+      render();
+
+      if (state.useFirebase && state.db && state.userId) {
+        try {
+          const ref = doc(state.db, 'artifacts', state.appId, 'public', 'data', collectionName, item.id);
+          await setDoc(ref, item, { merge: true });
+        } catch (err) {
+          console.error(`Firestore save error (${collectionName}):`, err);
+        }
+      }
+    }
+
+    async function removeRecord(collectionName, id) {
+      state[collectionName] = state[collectionName].filter(x => x.id !== id);
+      render();
+
+      if (state.useFirebase && state.db && state.userId) {
+        try {
+          const ref = doc(state.db, 'artifacts', state.appId, 'public', 'data', collectionName, id);
+          await deleteDoc(ref);
+        } catch (err) {
+          console.error(`Firestore delete error (${collectionName}):`, err);
+        }
+      }
+    }
+
+    // =========================================================================
+    // 3. YOUTH EMPLOYMENT COMPLIANCE & MATH HELPERS
+    // =========================================================================
+    function calculateDistanceMeters(lat1, lon1, lat2, lon2) {
+      const R = 6371e3;
+      const φ1 = lat1 * Math.PI / 180;
+      const φ2 = lat2 * Math.PI / 180;
+      const Δφ = (lat2 - lat1) * Math.PI / 180;
+      const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+      const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+                Math.cos(φ1) * Math.cos(φ2) *
+                Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return Math.round(R * c);
+    }
+
+    function calculateShiftMetrics(shift) {
+      const endMs = shift.clockOut || Date.now();
+      const grossMs = Math.max(0, endMs - shift.clockIn);
+      const grossMinutes = Math.floor(grossMs / 60000);
+      const grossHours = grossMs / (1000 * 3600);
+
+      let breakMinutes = 0;
+      if (grossHours > state.settings.breakThresholdHours) {
+        breakMinutes = Number(state.settings.breakDeductionMinutes) || 45;
+      }
+
+      const netMinutes = Math.max(0, grossMinutes - breakMinutes);
+      const netHours = netMinutes / 60;
+
+      const isOverDailyLimit = netHours > state.settings.maxDailyHours;
+      const isApproachingLimit = !isOverDailyLimit && netHours >= (state.settings.maxDailyHours - 0.5);
+
+      return {
+        grossMs,
+        grossMinutes,
+        grossHours,
+        breakMinutes,
+        netMinutes,
+        netHours,
+        isOverDailyLimit,
+        isApproachingLimit
+      };
+    }
+
+    function formatDuration(minutes) {
+      const hrs = Math.floor(minutes / 60);
+      const mins = minutes % 60;
+      return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+    }
+
+    function formatTime(timestamp) {
+      if (!timestamp) return '--:--';
+      const d = new Date(timestamp);
+      return d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function formatDateHebrew(dateStr) {
+      if (!dateStr) return '';
+      const [y, m, d] = dateStr.split('-');
+      return `${d}/${m}/${y}`;
+    }
+
+    function showToast(message, type = 'info') {
+      const container = document.getElementById('toast-container');
+      const el = document.createElement('div');
+      const colors = {
+        success: 'bg-emerald-600 text-white',
+        error: 'bg-rose-600 text-white',
+        warning: 'bg-amber-500 text-white',
+        info: 'bg-slate-800 text-white'
+      };
+      el.className = `${colors[type] || colors.info} px-4 py-3 rounded-xl shadow-lg text-sm font-medium flex items-center justify-between gap-3 transition-all duration-300 pointer-events-auto`;
+      el.innerHTML = `<span>${message}</span>`;
+      container.appendChild(el);
+      setTimeout(() => {
+        el.style.opacity = '0';
+        el.style.transform = 'translateY(-10px)';
+        setTimeout(() => el.remove(), 300);
+      }, 3500);
+    }
+
+    // =========================================================================
+    // 4. GPS LOCATION VERIFICATION
+    // =========================================================================
+    window.checkGPSLocation = function() {
+      const loc = state.locations.find(l => l.id === state.selectedLocationId);
+      if (!loc) {
+        showToast('אנא בחר מוקד קייטנה תחילה', 'warning');
+        return;
+      }
+
+      if (!navigator.geolocation) {
+        state.gps.status = 'error';
+        state.gps.errorMsg = 'הדפדפן שלך אינו תומך בשירותי מיקום (GPS).';
+        render();
+        return;
+      }
+
+      state.gps.status = 'loading';
+      state.gps.errorMsg = '';
+      render();
+
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const { latitude, longitude, accuracy } = pos.coords;
+          const dist = calculateDistanceMeters(latitude, longitude, loc.lat, loc.lng);
+          state.gps.status = 'success';
+          state.gps.lat = latitude;
+          state.gps.lng = longitude;
+          state.gps.accuracy = Math.round(accuracy);
+          state.gps.distance = dist;
+          state.gps.inRange 
